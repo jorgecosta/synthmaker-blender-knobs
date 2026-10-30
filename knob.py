@@ -11,7 +11,11 @@ Looks:
     A  brushed aluminium: concentric-brushed top, polished chamfer, straight knurl, engraved black line
     B  vintage bakelite: fluted brown-black body with a skirt, spun-nickel cap, engraved line
     C  modern dark: soft-touch body, glowing indicator, a static value ring that lights up to the value
+    D  drive pedal: a chunky soft-touch knob on a skirt, a white pointer line over its top and skirt, and a printed
+       0-10 scale around it that stays still while the knob turns (Controls 2, the Drive set)
     S  bat-handle toggle switch (2 frames: off = lever down, on = lever up)
+    T  a three-way selector: a chicken-head pointer over three printed dots (3 frames: left, middle, right;
+       Controls 2's Soft / Hard / Fold)
     P  a faceplate (12:5) of dark anodised, brushed aluminium with four screws and an engraved border: an
        Image to put behind a module's knobs (one frame, 960 x 400)
 
@@ -32,7 +36,7 @@ Q = 1                              # look version: 1 = the first strips, 2 = the
 def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     p = argparse.ArgumentParser()
-    p.add_argument("--look", default="A", choices=["A", "B", "C", "S", "P"])
+    p.add_argument("--look", default="A", choices=["A", "B", "C", "D", "S", "T", "P"])
     p.add_argument("--cam", default="top", choices=["top", "iso"])
     p.add_argument("--frames", type=int, default=128)
     p.add_argument("--size", type=int, default=256)
@@ -928,6 +932,154 @@ def value_ring(glow, r_in=1.07, r_out=1.15):
     return ring, halo, [nt.nodes["Value"], hnt.nodes["Value"]]
 
 
+def print_mat(name, color=(0.86, 0.86, 0.84)):
+    """Silk-screened paint: an off-white, slightly rough print that never glows."""
+    m, nt, b = node_mat(name)
+    set_in(b, Base_Color=(*color, 1), Roughness=0.62, Specular_IOR_Level=0.35)
+    return m
+
+
+def drive_body(name):
+    """Look D's body: soft-touch black with a white pointer line along +Y, over the top and down across the skirt."""
+    m, nt, b = node_mat(name)
+    tc, sep = obj_coords(nt)
+    set_in(b, Base_Color=(0.018, 0.018, 0.02, 1), Roughness=0.52, Specular_IOR_Level=0.45, Sheen_Weight=0.25,
+           Sheen_Roughness=0.4)
+    n = nt.nodes.new("ShaderNodeTexNoise")
+    n.inputs["Scale"].default_value = 260
+    nt.links.new(tc.outputs["Object"], n.inputs["Vector"])
+    bump = nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = 0.05
+    nt.links.new(n.outputs["Fac"], bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"], b.inputs["Normal"])
+    # The pointer: on the top from near the centre to the edge, and on the skirt's top face out to its rim.
+    top = line_mask(nt, sep, 0.045, 0.18, 0.80, 0.60)
+    skirt = math_node(nt, "MULTIPLY", line_mask(nt, sep, 0.05, 0.86, 1.10, 0.10),
+                      smooth_band(nt, sep.outputs["Z"], -1, 0.20, 0.01))
+    mask = math_node(nt, "MINIMUM", math_node(nt, "ADD", top, skirt), 1.0)
+    col = nt.nodes.new("ShaderNodeMix")
+    col.data_type = "RGBA"
+    col.inputs[6].default_value = (0.018, 0.018, 0.02, 1)
+    col.inputs[7].default_value = (0.90, 0.90, 0.88, 1)
+    nt.links.new(mask, col.inputs["Factor"])
+    nt.links.new(col.outputs[2], b.inputs["Base Color"])
+    nt.links.new(math_node(nt, "MULTIPLY_ADD", mask, 0.10, 0.52), b.inputs["Roughness"])
+    return m
+
+
+def value_at(v, r):
+    """Where value v (0..1) sits on a circle of radius r, as the knob points at it: 7 o'clock to 5 o'clock."""
+    a = math.pi / 2 + SWEEP / 2 - SWEEP * v
+    return (r * math.cos(a), r * math.sin(a))
+
+
+def scale_marks(count, r_num, r_tick, paint, numbers=True, size=0.17):
+    """The printed scale that doesn't turn: a tick and a number for 0..count-1, flat on the floor."""
+    objs = []
+    for k in range(count):
+        v = k / (count - 1)
+        x, y = value_at(v, r_tick)
+        bpy.ops.mesh.primitive_cylinder_add(vertices=24, radius=0.028, depth=0.004, location=(x, y, 0.002))
+        dot = bpy.context.object
+        dot.name = f"Tick{k}"
+        dot.data.materials.append(paint)
+        objs.append(dot)
+        if not numbers:
+            continue
+        curve = bpy.data.curves.new(f"Num{k}", "FONT")
+        curve.body = str(k)
+        curve.align_x, curve.align_y = "CENTER", "CENTER"
+        curve.size = size
+        curve.extrude = 0.0015
+        t = bpy.data.objects.new(f"Num{k}", curve)
+        bpy.context.scene.collection.objects.link(t)
+        t.location = (*value_at(v, r_num), 0.002)
+        t.data.materials.append(paint)
+        objs.append(t)
+    return objs
+
+
+def knob_D():
+    """A drive pedal knob: a wide skirt with a rounded rim, a tall slightly tapered body with 36 shallow grip
+    flutes, a flat top with a soft edge; the white pointer runs over the top and the skirt. The 0-10 scale is printed
+    round it and stays still."""
+    flutes = 36
+
+    def ridge(t):
+        return 0.018 * (0.5 + 0.5 * math.cos(flutes * t)) ** 2
+
+    P = [(1.10, 0.0, 0)]
+    P += fillet((1.10, 0.0), (1.12, 0.0), (1.12, 0.03), 3)
+    P += [(1.12, 0.03, 0)]
+    P += fillet((1.12, 0.03), (1.12, 0.10), (1.06, 0.115), 4)
+    P += [(1.06, 0.115, 0), (0.90, 0.125, 0)]
+    P += fillet((0.90, 0.125), (0.84, 0.13), (0.84, 0.17), 3, w=0.3)
+    P += [(0.84, 0.17, 0.8), (0.83, 0.30, 1), (0.82, 0.44, 1), (0.81, 0.54, 0.8)]
+    P += fillet((0.81, 0.54), (0.80, 0.62), (0.72, 0.625), 5, w=0.2)
+    P += [(0.72, 0.625, 0), (0.40, 0.628, 0), (0.15, 0.63, 0)]
+    o = lathe("Knob", P, flutes * 12, ridge)
+    o.data.materials.append(drive_body("Drive"))
+    marks = scale_marks(11, 1.42, 1.22, print_mat("Print"))
+    return [o] + marks, 3.55   # the numbers and the soft shadow inside the frame
+
+
+def selector_T():
+    """A three-way selector: a black chicken-head pointer on a round base, over three printed dots. It points at
+    the left dot, the middle one or the right one."""
+    objs = []
+    base = lathe("Base", [(0.62, 0.0, 0), (0.62, 0.06, 0), (0.58, 0.10, 0), (0.30, 0.11, 0)], 128)
+    base.data.materials.append(metal("Nickel", (0.70, 0.70, 0.70), 0.30, aniso=0.5))
+    objs.append(base)
+    # The chicken head: a tapered bar, round at the back, pointed at the front, with a white line along it.
+    from mathutils import Vector
+    bm = bmesh.new()
+    outline = []
+    for i in range(48):            # the round back
+        t = math.pi + math.pi * i / 47
+        outline.append((0.30 * math.cos(t), -0.10 + 0.30 * math.sin(t) * 0.9))
+    outline += [(0.30, -0.10), (0.11, 0.78), (0.0, 0.86), (-0.11, 0.78), (-0.30, -0.10)]
+    vs = [bm.verts.new((x, y, 0.11)) for x, y in outline]
+    face = bm.faces.new(vs)
+    ext = bmesh.ops.extrude_face_region(bm, geom=[face])
+    top = [v for v in ext["geom"] if isinstance(v, bmesh.types.BMVert)]
+    bmesh.ops.translate(bm, verts=top, vec=Vector((0, 0, 0.30)))
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    me = bpy.data.meshes.new("Pointer")
+    bm.to_mesh(me)
+    bm.free()
+    head = bpy.data.objects.new("Pointer", me)
+    bpy.context.scene.collection.objects.link(head)
+    bev = head.modifiers.new("Bevel", "BEVEL")
+    bev.width = 0.035
+    bev.segments = 4
+    m, nt, b = node_mat("Bakelite black")
+    tc, sep = obj_coords(nt)
+    set_in(b, Base_Color=(0.02, 0.02, 0.022, 1), Roughness=0.30, Specular_IOR_Level=0.55, Coat_Weight=0.4,
+           Coat_Roughness=0.15)
+    line = line_mask(nt, sep, 0.03, 0.05, 0.74, 0.40)
+    col = nt.nodes.new("ShaderNodeMix")
+    col.data_type = "RGBA"
+    col.inputs[6].default_value = (0.02, 0.02, 0.022, 1)
+    col.inputs[7].default_value = (0.90, 0.90, 0.88, 1)
+    nt.links.new(line, col.inputs["Factor"])
+    nt.links.new(col.outputs[2], b.inputs["Base Color"])
+    head.data.materials.append(m)
+    objs.append(head)
+    paint = print_mat("Print")
+    for k, ang in enumerate(SELECTOR):
+        a = math.pi / 2 + ang
+        bpy.ops.mesh.primitive_cylinder_add(vertices=32, radius=0.07, depth=0.004,
+                                            location=(1.05 * math.cos(a), 1.05 * math.sin(a), 0.002))
+        dot = bpy.context.object
+        dot.name = f"Dot{k}"
+        dot.data.materials.append(paint)
+        objs.append(dot)
+    return objs, 2.9, head
+
+
+SELECTOR = [math.radians(45), 0.0, math.radians(-45)]   # left, middle, right (seen from above, +Y up)
+
+
 def switch_S():
     """A bat-handle toggle: washer, hex nut, threaded bushing and a chrome lever that tips forward or back."""
     objs = []
@@ -1072,7 +1224,7 @@ def main():
     world(s)
     lights_v2() if Q == 2 else lights()
     shadow_catcher()
-    frames = 2 if a.look == "S" else a.frames
+    frames = {"S": 2, "T": 3}.get(a.look, a.frames)
     bpy.context.preferences.edit.keyframe_new_interpolation_type = "LINEAR"
     s.frame_start, s.frame_end = 1, frames
     values = []
@@ -1082,6 +1234,10 @@ def main():
         objs, scale = knob_B()
     elif a.look == "C":
         objs, scale, (ring, halo, values) = knob_C(glow)
+    elif a.look == "D":
+        objs, scale = knob_D()
+    elif a.look == "T":
+        objs, scale, pointer = selector_T()
     elif a.look == "P":
         objs, scale = panel_P()
         frames = 1
@@ -1102,6 +1258,10 @@ def main():
         for f, ang in ((1, -30), (2, 30)):          # off: lever tipped towards the viewer's bottom; on: top
             lever.rotation_euler.x = math.radians(-ang)
             lever.keyframe_insert("rotation_euler", index=0, frame=f)
+    elif a.look == "T":
+        for f, ang in enumerate(SELECTOR, start=1):   # one frame per position, constant between them
+            pointer.rotation_euler.z = ang
+            pointer.keyframe_insert("rotation_euler", index=2, frame=f)
     else:
         knob = objs[0]
         for f, v in ((1, 0.0), (frames, 1.0)):
@@ -1135,7 +1295,7 @@ def main():
     if missing:
         print("ERROR missing frames", len(missing))
         sys.exit(1)
-    name = {"S": "switch", "P": "panel"}.get(a.look, f"knob{a.look}")
+    name = {"S": "switch", "T": "selector", "P": "panel"}.get(a.look, f"knob{a.look}")
     if a.no_strip:
         print("FRAMES", fdir, frames)
         return

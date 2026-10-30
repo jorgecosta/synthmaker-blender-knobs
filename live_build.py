@@ -10,6 +10,11 @@ screenshot of its window after each step (no macOS permission needed), to check 
 The steps: a cylinder, rings cut into its side, a bevel on the top edge, a knurl from Geometry Nodes, smooth
 shading, brushed aluminium, the studio lights and the top camera, the sweep keyed over 128 frames, then the sweep
 played in the rendered viewport. The full strip renders through the studio queue, never from this session.
+
+`--look D` builds Controls 2's drive knob instead: the body and skirt turned on a lathe, its grip flutes, the white
+pointer, the printed 0-10 scale that stays still, the studio, the sweep, a rendered frame, and the three-way
+selector (three positions) last. Its steps are named for the lesson's `blender` marks: body, flutes, pointer,
+numbers, studio, sweep, play, render, selector, back, stop.
 """
 
 import bpy, bmesh, math, os, sys, argparse
@@ -25,6 +30,7 @@ def args():
     p.add_argument("--quit", action="store_true")
     p.add_argument("--shots", default="")
     p.add_argument("--ui-scale", type=float, default=1.35)
+    p.add_argument("--look", default="A", choices=["A", "D"], help="A: Controls 1's aluminium knob; D: Controls 2's drive knob")
     # A take timed to Ned's lines (Controls 1): [[seconds, "step"], …] from the moment `--go` appears; the start's
     # wall-clock time goes to `--t0-out`, so the cut can line the take up with the narration.
     p.add_argument("--timeline", default="")
@@ -292,8 +298,116 @@ def stop():
     say("A filmstrip of 128 frames, ready for SynthMaker")
 
 
-STEPS = [(clear, 1.0), (cylinder, 3.0), (rings, 2.5), (bevel, 2.5), (knurl, 3.5), (smooth, 2.5), (material, 3.5),
-         (studio, 4.0), (sweep, 2.5), (play, 6.0), (stop, 2.0)]
+# ---------------------------------------------------------------- Controls 2: the drive knob (--look D)
+
+def drive_profile(ridged):
+    """The drive knob's profile, as knob.py's look D turns it; ridged adds the grip flutes."""
+    flutes = 36
+    ridge = (lambda t: 0.018 * (0.5 + 0.5 * math.cos(flutes * t)) ** 2) if ridged else None
+    P = [(1.10, 0.0, 0)]
+    P += K.fillet((1.10, 0.0), (1.12, 0.0), (1.12, 0.03), 3)
+    P += [(1.12, 0.03, 0)]
+    P += K.fillet((1.12, 0.03), (1.12, 0.10), (1.06, 0.115), 4)
+    P += [(1.06, 0.115, 0), (0.90, 0.125, 0)]
+    P += K.fillet((0.90, 0.125), (0.84, 0.13), (0.84, 0.17), 3, w=0.3)
+    P += [(0.84, 0.17, 0.8), (0.83, 0.30, 1), (0.82, 0.44, 1), (0.81, 0.54, 0.8)]
+    P += K.fillet((0.81, 0.54), (0.80, 0.62), (0.72, 0.625), 5, w=0.2)
+    P += [(0.72, 0.625, 0), (0.40, 0.628, 0), (0.15, 0.63, 0)]
+    return P, ridge, flutes
+
+
+def replace_knob(o_new):
+    # On a fresh scene the lathe's new object is already the only "Knob": never remove the one just made.
+    old = knob_object()
+    if old and old != o_new:
+        bpy.data.objects.remove(old)
+    o_new.name = "Knob"
+    o_new.select_set(True)
+    bpy.context.view_layer.objects.active = o_new
+
+
+def body():
+    say("1 · A body on a wide skirt: one profile, turned round on a lathe")
+    P, _, flutes = drive_profile(False)
+    replace_knob(K.lathe("Knob", P, flutes * 12))
+    in_view(bpy.ops.view3d.view_axis, type="FRONT")
+    in_view(bpy.ops.view3d.view_selected)
+    in_view(bpy.ops.view3d.view_orbit, angle=math.radians(30), type="ORBITUP")
+
+
+def flutes():
+    say("2 · Shallow flutes round the body, for grip: 36 of them")
+    P, ridge, n = drive_profile(True)
+    replace_knob(K.lathe("Knob", P, n * 12, ridge))
+
+
+def pointer():
+    say("3 · Soft-touch black, and a white pointer line over the top and down the skirt")
+    o = knob_object()
+    o.data.materials.clear()
+    o.data.materials.append(K.drive_body("Drive"))
+    _, area, _ = view3d()
+    area.spaces.active.shading.type = "MATERIAL"
+
+
+def numbers():
+    say("4 · A printed scale from 0 to 10 round it. It stays still: only the knob turns")
+    K.scale_marks(11, 1.42, 1.22, K.print_mat("Print"))
+    in_view(bpy.ops.view3d.view_axis, type="TOP")
+    in_view(bpy.ops.view3d.view_all)
+
+
+def drive_studio():
+    say("5 · The same studio as last time: the lights never move, and a camera straight down")
+    K.world(bpy.context.scene)
+    K.lights_v2()
+    K.shadow_catcher()
+    K.camera_v2("top", 3.55)
+    s = bpy.context.scene
+    s.render.film_transparent = True
+    s.view_settings.view_transform = "Standard"
+    s.render.engine = "BLENDER_EEVEE"
+    s.render.resolution_x = s.render.resolution_y = 256
+    bpy.data.objects["ShadowCatcher"].hide_set(True)
+    for name in ("CardL", "CardR", "CardF", "CardRim"):
+        if name in bpy.data.objects:
+            bpy.data.objects[name].hide_set(True)
+    _, area, _ = view3d()
+    space = area.spaces.active
+    space.shading.type = "RENDERED"
+    space.overlay.show_overlays = False
+    in_view(bpy.ops.view3d.view_camera)
+    in_view(bpy.ops.view3d.view_center_camera)
+
+
+def selector():
+    """The three-way selector: built in one go, then its three positions keyed and played."""
+    say("6 · And a three-way selector: a chicken-head pointer over three dots, rendered three times")
+    window, _, _ = view3d()
+    if window and window.screen.is_animation_playing:
+        in_view(bpy.ops.screen.animation_cancel, restore_frame=False)
+    for o in list(bpy.data.objects):
+        if o.name.startswith(("Knob", "Tick", "Num")):
+            bpy.data.objects.remove(o)
+    objs, _, head = K.selector_T()
+    s = bpy.context.scene
+    s.frame_start, s.frame_end = 1, 3
+    bpy.context.preferences.edit.keyframe_new_interpolation_type = "CONSTANT"
+    for f, ang in enumerate(K.SELECTOR, start=1):
+        head.rotation_euler.z = ang
+        head.keyframe_insert("rotation_euler", index=2, frame=f)
+    s.frame_set(1)
+    s.render.fps = 2   # a position every half second in the viewport
+    bpy.app.timers.register(lambda: (play(), None)[1], first_interval=0.8)
+
+
+A_STEPS = [(clear, 1.0), (cylinder, 3.0), (rings, 2.5), (bevel, 2.5), (knurl, 3.5), (smooth, 2.5), (material, 3.5),
+           (studio, 4.0), (sweep, 2.5), (play, 6.0), (stop, 2.0)]
+D_STEPS = [(clear, 1.0), (body, 3.0), (flutes, 3.0), (pointer, 3.5), (numbers, 3.5), (drive_studio, 4.0), (sweep, 2.5),
+           (play, 6.0), (selector, 6.0), (stop, 2.0)]
+if A.look == "D":
+    studio = drive_studio   # the timeline's "studio" step is this look's studio
+STEPS = D_STEPS if A.look == "D" else A_STEPS
 state = {"i": 0}
 
 
@@ -322,7 +436,9 @@ def tick():
     return pause * A.pace
 
 
-NAMED = {f.__name__: f for f in (clear, cylinder, rings, bevel, knurl, smooth, material, studio, sweep, play, render, back, stop)}
+NAMED = {f.__name__: f for f in (clear, cylinder, rings, bevel, knurl, smooth, material, sweep, play, render, back, stop,
+                                  body, flutes, pointer, numbers, selector)}
+NAMED["studio"] = studio
 
 
 def timed():

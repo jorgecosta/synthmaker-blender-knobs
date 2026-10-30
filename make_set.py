@@ -2,10 +2,11 @@
 # SynthMaker Blender knobs · Copyright (c) 2026 ViDesk Ltd · MIT licence (see LICENSE beside this file)
 """Writes a SynthMaker controls set (.smcontrols, SM-066 step 1) from rendered strips.
 
-    make_set.py OUT.smcontrols "Set name" kind:camera:size:sweep:path[:slice] [...]
+    make_set.py OUT.smcontrols "Set name" kind:camera:size:sweep:path[:slice[:id]] [...]
 
 kind is knob, switch or image; camera top or iso (or -); size in points; sweep in degrees (or -). The picture's
-frame count comes from its shape for knobs and switches (height / width), 1 for an image. The file is the JSON
+frame count comes from its shape for knobs and switches (height / width), 1 for an image. id names the control in
+the set ("selector"); by default it's knob, toggle or faceplate (knob-iso for the tilted camera). The file is the JSON
 SynthMaker reads (ControlSet in SynthMaker/Model/ControlSet.swift): each picture's bytes in base64, its pixel size,
 its frames, nine-slice insets for a background picture (slice = "top,leading,bottom,trailing" in pixels), and an id that is the first 8 bytes of its SHA-256, so the app can check nothing was swapped.
 """
@@ -24,16 +25,17 @@ def main():
     for spec in specs:
         parts = spec.split(":")
         kind, camera, size, sweep, path = parts[:5]
-        slice_px = [int(v) for v in parts[5].split(",")] if len(parts) > 5 else None
+        slice_px = [int(v) for v in parts[5].split(",")] if len(parts) > 5 and parts[5] else None
+        given_id = parts[6] if len(parts) > 6 and parts[6] else None
         data = open(path, "rb").read()
         w, h = size_of(path)
         frames = 1 if kind == "image" else h // w
         stem = os.path.splitext(os.path.basename(path))[0]
         nice = {"knob": "knob", "switch": "toggle", "image": "faceplate"}[kind]
         control = {
-            "id": nice + ("-iso" if camera == "iso" else ""),   # "knob", "toggle", "faceplate"; "knob-iso" for the tilted view
+            "id": given_id or nice + ("-iso" if camera == "iso" else ""),   # "knob", "toggle", "faceplate"; "knob-iso" tilted
             "kind": kind,
-            "image": {"id": hashlib.sha256(data).digest()[:8].hex(), "name": f"{name} {nice}", "data": base64.b64encode(data).decode(),
+            "image": {"id": hashlib.sha256(data).digest()[:8].hex(), "name": f"{name} {given_id or nice}", "data": base64.b64encode(data).decode(),
                       "width": w, "height": h, "frames": frames},
         }
         if slice_px: control["image"]["slice"] = slice_px
