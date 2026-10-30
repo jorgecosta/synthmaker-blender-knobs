@@ -14,6 +14,10 @@ Looks:
     D  drive pedal: a chunky soft-touch knob on a skirt, a white pointer line over its top and skirt, and a printed
        0-10 scale around it that stays still while the knob turns (Controls 2, the Drive set)
     S  bat-handle toggle switch (2 frames: off = lever down, on = lever up)
+    R  look D made hyper-real (30 Oct): satin moulded plastic with micro-roughness, polished ridges and a faint
+       smudge, a spun-aluminium cap, the white pointer paint-filled in a groove over the top and down the skirt, a
+       screen-printed 0-10 scale (Inter numerals); always quality 2, AgX colour (highlights roll off, never clip)
+    RT the three-way selector in look R: a satin-black chicken head with rounded edges on a spun-aluminium base
     T  a three-way selector: a chicken-head pointer over three printed dots (3 frames: left, middle, right;
        Controls 2's Soft / Hard / Fold)
     P  a faceplate (12:5) of dark anodised, brushed aluminium with four screws and an engraved border: an
@@ -21,7 +25,8 @@ Looks:
 
 Cameras: top (orthographic, straight down) or iso (orthographic, tilted 30 degrees from vertical).
 Rendering: Cycles, transparent film, a shadow catcher so the soft shadow lands in the alpha, the Standard view
-transform (not AgX/Filmic: UI art must keep its colours) and sRGB PNG with straight alpha.
+transform (not AgX/Filmic: UI art must keep its colours; look R alone uses AgX, being black, white and aluminium)
+and sRGB PNG with straight alpha.
 The lights never move, so highlights stay put while the knob turns: what makes a rendered strip look real
 compared with one image rotated in code.
 """
@@ -36,7 +41,7 @@ Q = 1                              # look version: 1 = the first strips, 2 = the
 def args():
     argv = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
     p = argparse.ArgumentParser()
-    p.add_argument("--look", default="A", choices=["A", "B", "C", "D", "S", "T", "P"])
+    p.add_argument("--look", default="A", choices=["A", "B", "C", "D", "R", "RT", "S", "T", "P"])
     p.add_argument("--cam", default="top", choices=["top", "iso"])
     p.add_argument("--frames", type=int, default=128)
     p.add_argument("--size", type=int, default=256)
@@ -46,6 +51,7 @@ def args():
     p.add_argument("--out", required=True)
     p.add_argument("--blend", default="", help="save the scene here before rendering")
     p.add_argument("--glow", default="0.10,0.78,1.0", help="look C's glow colour, linear RGB")
+    p.add_argument("--view", default="", help="look R's view transform: agx (its default), agx-punchy, filmic or standard")
     p.add_argument("--no-strip", action="store_true", help="render the frames only (strips.swift joins and scales them)")
     p.add_argument("--quality", type=int, default=1, choices=[1, 2],
                    help="2: polar brushing, scratches, a smudge, grime in the knurl, a rim light, long-lens cameras, more samples")
@@ -1189,6 +1195,260 @@ def panel_P():
     return objs, 3.2
 
 
+# ---------------------------------------------------------------- look R (30 Oct): the drive knob, hyper-real
+
+def noise_tex(nt, tc, scale, detail=2.0, rough=0.5, out="Fac"):
+    n = nt.nodes.new("ShaderNodeTexNoise")
+    n.inputs["Scale"].default_value = scale
+    n.inputs["Detail"].default_value = detail
+    n.inputs["Roughness"].default_value = rough
+    nt.links.new(tc.outputs["Object"], n.inputs["Vector"])
+    return n.outputs[out]
+
+
+def satin_plastic(name, pointer=None, color=0.013, rough0=0.27, dust_amount=0.0):
+    """Moulded satin-black plastic, as on a real pedal knob: a fine mould texture (micro-roughness), gloss that
+    wanders a little, edges and flute ridges polished brighter by fingers (Cycles' pointiness), a faint thumb smudge
+    and, if asked, a little dust. `pointer(nt, sep)` returns the mask of the white line: paint laid in a sunk groove."""
+    m, nt, b = node_mat(name)
+    tc, sep = obj_coords(nt)
+    set_in(b, Specular_IOR_Level=0.5, Sheen_Weight=0.04, Sheen_Roughness=0.45)
+    wander = noise_tex(nt, tc, 7, detail=5)                 # broad gloss variation across the moulding
+    mould = noise_tex(nt, tc, 170, detail=3, rough=0.6)     # the mould's fine texture
+    geo = nt.nodes.new("ShaderNodeNewGeometry")
+    edge = nt.nodes.new("ShaderNodeMapRange")
+    edge.interpolation_type = "SMOOTHSTEP"
+    nt.links.new(geo.outputs["Pointiness"], edge.inputs["Value"])
+    edge.inputs["From Min"].default_value, edge.inputs["From Max"].default_value = 0.515, 0.58
+    smu = smudge(nt, tc, where=(-0.30, 0.22), size=0.30)
+    # Dust: a few soft specks, only where a face looks up.
+    up = nt.nodes.new("ShaderNodeSeparateXYZ")
+    nt.links.new(geo.outputs["Normal"], up.inputs[0])
+    upward = nt.nodes.new("ShaderNodeMapRange")
+    nt.links.new(up.outputs["Z"], upward.inputs["Value"])
+    upward.inputs["From Min"].default_value, upward.inputs["From Max"].default_value = 0.5, 0.95
+    speck = nt.nodes.new("ShaderNodeMapRange")
+    nt.links.new(noise_tex(nt, tc, 95, detail=1), speck.inputs["Value"])
+    speck.inputs["From Min"].default_value, speck.inputs["From Max"].default_value = 0.73, 0.78
+    dust = math_node(nt, "MULTIPLY", math_node(nt, "MULTIPLY", speck.outputs[0], upward.outputs[0]), dust_amount)
+    rough = math_node(nt, "MULTIPLY_ADD", wander, 0.10, rough0)        # 0.27-0.37: satin, not matte, not gloss
+    rough = math_node(nt, "MULTIPLY_ADD", mould, 0.06, rough)
+    rough = math_node(nt, "MULTIPLY_ADD", edge.outputs[0], -0.12, rough)
+    rough = math_node(nt, "MULTIPLY_ADD", smu, 0.10, rough)
+    rough = math_node(nt, "MULTIPLY_ADD", dust, 0.5, rough)
+    plastic = nt.nodes.new("ShaderNodeMix")
+    plastic.data_type = "RGBA"
+    plastic.inputs[6].default_value = (color, color, color * 1.08, 1)
+    plastic.inputs[7].default_value = (0.24, 0.23, 0.22, 1)            # dust
+    nt.links.new(dust, plastic.inputs["Factor"])
+    h = math_node(nt, "MULTIPLY", mould, 1.0)
+    bump = nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = 0.035
+    bump.inputs["Distance"].default_value = 0.004
+    nt.links.new(h, bump.inputs["Height"])
+    normal = bump.outputs["Normal"]
+    color_out = plastic.outputs[2]
+    if pointer:
+        mask = pointer(nt, sep)
+        paint = nt.nodes.new("ShaderNodeMix")
+        paint.data_type = "RGBA"
+        nt.links.new(color_out, paint.inputs[6])
+        ink = nt.nodes.new("ShaderNodeMix")
+        ink.data_type = "RGBA"
+        ink.inputs[6].default_value = (0.70, 0.70, 0.68, 1)
+        ink.inputs[7].default_value = (0.80, 0.80, 0.78, 1)
+        nt.links.new(noise_tex(nt, tc, 60, detail=4), ink.inputs["Factor"])
+        nt.links.new(ink.outputs[2], paint.inputs[7])
+        nt.links.new(mask, paint.inputs["Factor"])
+        color_out = paint.outputs[2]
+        rough = math_node(nt, "MULTIPLY_ADD", mask, 0.18, rough)        # the paint is duller than the plastic
+        lb = nt.nodes.new("ShaderNodeBump")
+        lb.invert = True
+        lb.inputs["Strength"].default_value = 0.5
+        lb.inputs["Distance"].default_value = 0.012
+        nt.links.new(mask, lb.inputs["Height"])
+        nt.links.new(normal, lb.inputs["Normal"])
+        normal = lb.outputs["Normal"]
+    nt.links.new(color_out, b.inputs["Base Color"])
+    nt.links.new(rough, b.inputs["Roughness"])
+    nt.links.new(normal, b.inputs["Normal"])
+    return m
+
+
+def ink_mat(name):
+    """Screen-printed ink: off-white, a little uneven in tone and gloss, a faint grain."""
+    m, nt, b = node_mat(name)
+    tc, _ = obj_coords(nt)
+    tone = nt.nodes.new("ShaderNodeMix")
+    tone.data_type = "RGBA"
+    tone.inputs[6].default_value = (0.66, 0.66, 0.64, 1)
+    tone.inputs[7].default_value = (0.76, 0.76, 0.74, 1)
+    nt.links.new(noise_tex(nt, tc, 40, detail=5), tone.inputs["Factor"])
+    nt.links.new(tone.outputs[2], b.inputs["Base Color"])
+    grain = noise_tex(nt, tc, 260, detail=2)
+    nt.links.new(math_node(nt, "MULTIPLY_ADD", grain, 0.12, 0.42), b.inputs["Roughness"])
+    set_in(b, Specular_IOR_Level=0.4)
+    bump = nt.nodes.new("ShaderNodeBump")
+    bump.inputs["Strength"].default_value = 0.08
+    bump.inputs["Distance"].default_value = 0.002
+    nt.links.new(grain, bump.inputs["Height"])
+    nt.links.new(bump.outputs["Normal"], b.inputs["Normal"])
+    return m
+
+
+def scale_marks_R(count, r_num, r_tick, paint, size=0.19):
+    """Look R's printed scale: Inter numerals (Blender's own font, OFL), a touch bolder, and round tick dots; a
+    film of ink, so the edges stay crisp."""
+    font = None
+    try:
+        font = bpy.data.fonts.load(os.path.join(bpy.utils.system_resource("DATAFILES"), "fonts", "Inter.woff2"))
+    except Exception as e:
+        print("FONT default", e)
+    objs = []
+    for k in range(count):
+        v = k / (count - 1)
+        x, y = value_at(v, r_tick)
+        bpy.ops.mesh.primitive_cylinder_add(vertices=48, radius=0.032, depth=0.003, location=(x, y, 0.0015))
+        dot = bpy.context.object
+        dot.name = f"Tick{k}"
+        dot.data.materials.append(paint)
+        objs.append(dot)
+        curve = bpy.data.curves.new(f"Num{k}", "FONT")
+        if font:
+            curve.font = font
+        curve.body = str(k)
+        curve.align_x, curve.align_y = "CENTER", "CENTER"
+        curve.size = size
+        curve.offset = 0.0035            # a little weight, as a printed scale has
+        curve.extrude = 0.001
+        curve.resolution_u = 24
+        t = bpy.data.objects.new(f"Num{k}", curve)
+        bpy.context.scene.collection.objects.link(t)
+        t.location = (*value_at(v, r_num), 0.0015)
+        t.data.materials.append(paint)
+        objs.append(t)
+    return objs
+
+
+def drive_profile_R(ridged=True):
+    """Look R's profile: look D's chunky body on a wide skirt, with rounder fillets (they carry the highlights), a
+    top domed by a hair, and a spun-aluminium cap set in the centre."""
+    flutes = 36
+    ridge = (lambda t: 0.022 * (0.5 + 0.5 * math.cos(flutes * t)) ** 2) if ridged else None
+    P = [(1.10, 0.0, 0)]
+    P += fillet((1.10, 0.0), (1.125, 0.0), (1.125, 0.03), 4)
+    P += [(1.125, 0.03, 0)]
+    P += fillet((1.125, 0.03), (1.125, 0.105), (1.06, 0.118), 7)
+    P += [(1.06, 0.118, 0), (0.98, 0.122, 0), (0.90, 0.127, 0)]
+    P += fillet((0.90, 0.127), (0.84, 0.132), (0.84, 0.18), 5, w=0.3)
+    P += [(0.84, 0.18, 0.8), (0.835, 0.24, 1), (0.83, 0.30, 1), (0.825, 0.37, 1), (0.82, 0.44, 1), (0.815, 0.50, 1),
+          (0.81, 0.54, 1)]
+    # The flutes run up into the rounded top edge and fade out across it: one clean scalloped edge, not two.
+    top_edge = fillet((0.81, 0.54), (0.80, 0.625), (0.71, 0.632), 9)
+    P += [(r, z, (1 - k / len(top_edge)) ** 1.5) for k, (r, z, _) in enumerate(top_edge, start=1)]
+    P += [(0.71, 0.632, 0), (0.60, 0.639, 0), (0.48, 0.644, 0), (0.37, 0.647, 0)]
+    # The cap's seat: a fine dark gap, then the cap with a small polished chamfer.
+    P += [(0.352, 0.647, 0), (0.346, 0.636, 0), (0.338, 0.636, 0)]
+    P += fillet((0.338, 0.636), (0.336, 0.651), (0.318, 0.654), 4)
+    P += [(0.318, 0.654, 0), (0.22, 0.656, 0), (0.10, 0.657, 0)]
+    return P, ridge, flutes
+
+
+def drive_pointer_R(nt, sep):
+    """The white line: on the top from the cap out over the edge, and over the skirt and down its rim."""
+    top = line_mask(nt, sep, 0.040, 0.39, 0.835, 0.58)
+    skirt = math_node(nt, "MULTIPLY", line_mask(nt, sep, 0.046, 0.875, 1.20, 0.03),
+                      smooth_band(nt, sep.outputs["Z"], -1, 0.20, 0.01))
+    return math_node(nt, "MINIMUM", math_node(nt, "ADD", top, skirt), 1.0)
+
+
+def knob_R():
+    """Look R: look D made real. Satin moulded plastic (micro-roughness, polished ridges, a faint smudge), a
+    spun-aluminium cap, a paint-filled white pointer over the top and down the skirt, a screen-printed 0-10 scale that
+    stays still, Controls 1's studio and its contact shadow."""
+    P, ridge, flutes = drive_profile_R()
+
+    def mat_of(r, z):
+        return 1 if (r < 0.337 and z > 0.640) else 0
+    o = lathe("Knob", P, flutes * 16, ridge, mat_of=mat_of)
+    o.data.materials.append(satin_plastic("Satin", drive_pointer_R))
+    o.data.materials.append(brushed_alu_v2("Cap", line_r=(8, 9), zmin=5))   # no line on the cap
+    marks = scale_marks_R(11, 1.42, 1.22, ink_mat("Ink"))
+    return [o] + marks, 3.55   # framed as look D, so the knob is the same size in the app
+
+
+def selector_R():
+    """The three-way selector in look R: a satin-black chicken head (drafted sides, rounded edges, a paint-filled
+    line) on a spun-aluminium base with a polished chamfer, over three screen-printed dots."""
+    from mathutils import Vector
+    objs = []
+    P = [(0.64, 0.0, 0), (0.64, 0.05, 0)]
+    P += fillet((0.64, 0.05), (0.64, 0.088), (0.602, 0.092), 5)
+    P += [(0.602, 0.092, 0), (0.585, 0.096, 0), (0.40, 0.098, 0), (0.20, 0.10, 0)]
+    base = lathe("Base", P, 256, mat_of=lambda r, z: 0 if (z > 0.093 and r < 0.59) else 1)
+    base.data.materials.append(brushed_alu_v2("Spun", line_r=(8, 9), zmin=5))
+    base.data.materials.append(polished_v2("Polished"))
+    objs.append(base)
+    # The chicken head: round at the back, pointed at the front; the top a little smaller than the bottom (the
+    # mould's draft), every edge rounded so it catches the light.
+    bm = bmesh.new()
+    # The outline: a round back (r 0.30) and a round tip (r 0.07), joined by their common tangents.
+    R, r, c1, c2 = 0.30, 0.07, -0.10, 0.78
+    phi = math.asin((R - r) / (c2 - c1))
+    outline = []
+    for i in range(64):            # the back, counter-clockwise through the bottom
+        t = math.pi - phi + (math.pi + 2 * phi) * i / 63
+        outline.append((R * math.cos(t), c1 + R * math.sin(t)))
+    for i in range(24):            # the tip, over the top
+        t = phi + (math.pi - 2 * phi) * i / 23
+        outline.append((r * math.cos(t), c2 + r * math.sin(t)))
+    vs = [bm.verts.new((x, y, 0.098)) for x, y in outline]
+    face = bm.faces.new(vs)
+    ext = bmesh.ops.extrude_face_region(bm, geom=[face])
+    top = [v for v in ext["geom"] if isinstance(v, bmesh.types.BMVert)]
+    bmesh.ops.translate(bm, verts=top, vec=Vector((0, 0, 0.34)))
+    for v in top:                  # the draft: scaled towards a point on the centre line, a little behind the pivot
+        v.co.x *= 0.92
+        v.co.y = 0.2 + (v.co.y - 0.2) * 0.95
+    bmesh.ops.recalc_face_normals(bm, faces=bm.faces)
+    sharp = [e for e in bm.edges if e.calc_face_angle(0) > math.radians(30)]
+    bmesh.ops.bevel(bm, geom=sharp, offset=0.055, segments=6, profile=0.5, affect="EDGES", clamp_overlap=True)
+    me = bpy.data.meshes.new("Pointer")
+    bm.to_mesh(me)
+    bm.free()
+    for p in me.polygons:
+        p.use_smooth = True
+    head = bpy.data.objects.new("Pointer", me)
+    bpy.context.scene.collection.objects.link(head)
+    wn = head.modifiers.new("Normals", "WEIGHTED_NORMAL")   # flat faces stay flat, the rounds stay smooth
+    wn.keep_sharp = True
+    wn.mode = "FACE_AREA"
+    head.data.materials.append(satin_plastic("Satin", lambda nt, sep: line_mask(nt, sep, 0.026, 0.02, 0.70, 0.425)))
+    objs.append(head)
+    ink = ink_mat("Ink")
+    for k, ang in enumerate(SELECTOR):
+        a = math.pi / 2 + ang
+        bpy.ops.mesh.primitive_cylinder_add(vertices=64, radius=0.07, depth=0.003,
+                                            location=(1.05 * math.cos(a), 1.05 * math.sin(a), 0.0015))
+        dot = bpy.context.object
+        dot.name = f"Dot{k}"
+        dot.data.materials.append(ink)
+        objs.append(dot)
+    return objs, 2.9, head
+
+
+def color_R(s, view=""):
+    """Look R's colour management: AgX rolls the highlights off as film does instead of clipping them; its
+    medium-high contrast look keeps the black plastic black and the paint white."""
+    view = view or "agx-high"
+    vt, look, ev = {"agx": ("AgX", "AgX - Medium High Contrast", 0.35), "agx-punchy": ("AgX", "AgX - Punchy", 0.35),
+                    "agx-high": ("AgX", "AgX - High Contrast", 0.45), "filmic": ("Filmic", "None", 0.3),
+                    "standard": ("Standard", "None", 0.0)}[view]
+    s.view_settings.view_transform = vt
+    s.view_settings.look = look
+    s.view_settings.exposure = ev
+
+
 # ---------------------------------------------------------------- strip
 
 def write_strip(frame_paths, out_png):
@@ -1218,13 +1478,13 @@ def write_strip(frame_paths, out_png):
 def main():
     global Q
     a = args()
-    Q = a.quality
+    Q = 2 if a.look in ("R", "RT") else a.quality     # look R is built on the hyper-real round
     glow = tuple(float(x) for x in a.glow.split(","))
     s = reset()
     world(s)
     lights_v2() if Q == 2 else lights()
     shadow_catcher()
-    frames = {"S": 2, "T": 3}.get(a.look, a.frames)
+    frames = {"S": 2, "T": 3, "RT": 3}.get(a.look, a.frames)
     bpy.context.preferences.edit.keyframe_new_interpolation_type = "LINEAR"
     s.frame_start, s.frame_end = 1, frames
     values = []
@@ -1236,8 +1496,12 @@ def main():
         objs, scale, (ring, halo, values) = knob_C(glow)
     elif a.look == "D":
         objs, scale = knob_D()
+    elif a.look == "R":
+        objs, scale = knob_R()
     elif a.look == "T":
         objs, scale, pointer = selector_T()
+    elif a.look == "RT":
+        objs, scale, pointer = selector_R()
     elif a.look == "P":
         objs, scale = panel_P()
         frames = 1
@@ -1248,6 +1512,8 @@ def main():
     use_engine(s, a.engine, a.samples, a.size)
     if Q == 2 and a.engine == "cycles":
         use_engine_v2(s, a.samples)
+    if a.look in ("R", "RT"):
+        color_R(s, a.view)
     if a.look == "P":   # a 12:5 picture, the camera's width spanning the plate
         s.render.resolution_x, s.render.resolution_y = a.size * 3, round(a.size * 1.25)
 
@@ -1258,7 +1524,7 @@ def main():
         for f, ang in ((1, -30), (2, 30)):          # off: lever tipped towards the viewer's bottom; on: top
             lever.rotation_euler.x = math.radians(-ang)
             lever.keyframe_insert("rotation_euler", index=0, frame=f)
-    elif a.look == "T":
+    elif a.look in ("T", "RT"):
         for f, ang in enumerate(SELECTOR, start=1):   # one frame per position, constant between them
             pointer.rotation_euler.z = ang
             pointer.keyframe_insert("rotation_euler", index=2, frame=f)
@@ -1295,7 +1561,7 @@ def main():
     if missing:
         print("ERROR missing frames", len(missing))
         sys.exit(1)
-    name = {"S": "switch", "T": "selector", "P": "panel"}.get(a.look, f"knob{a.look}")
+    name = {"S": "switch", "T": "selector", "RT": "selectorR", "P": "panel"}.get(a.look, f"knob{a.look}")
     if a.no_strip:
         print("FRAMES", fdir, frames)
         return

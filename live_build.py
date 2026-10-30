@@ -15,6 +15,10 @@ played in the rendered viewport. The full strip renders through the studio queue
 pointer, the printed 0-10 scale that stays still, the studio, the sweep, a rendered frame, and the three-way
 selector (three positions) last. Its steps are named for the lesson's `blender` marks: body, flutes, pointer,
 numbers, studio, sweep, play, render, selector, back, stop.
+
+`--look R` builds the same knob hyper-real (knob.py's look R, the Drive set's strips since 30 Oct), in the same steps:
+satin moulded plastic with a spun-aluminium cap, the pointer paint-filled in a groove, a screen-printed scale, the
+studio in AgX colour, and look R's selector.
 """
 
 import bpy, bmesh, math, os, sys, argparse
@@ -30,7 +34,8 @@ def args():
     p.add_argument("--quit", action="store_true")
     p.add_argument("--shots", default="")
     p.add_argument("--ui-scale", type=float, default=1.35)
-    p.add_argument("--look", default="A", choices=["A", "D"], help="A: Controls 1's aluminium knob; D: Controls 2's drive knob")
+    p.add_argument("--look", default="A", choices=["A", "D", "R"],
+                   help="A: Controls 1's aluminium knob; D: Controls 2's drive knob; R: the drive knob hyper-real")
     # A take timed to Ned's lines (Controls 1): [[seconds, "step"], …] from the moment `--go` appears; the start's
     # wall-clock time goes to `--t0-out`, so the cut can line the take up with the narration.
     p.add_argument("--timeline", default="")
@@ -40,6 +45,9 @@ def args():
 
 
 A = args()
+REAL = A.look == "R"
+if REAL:
+    K.Q = 2   # look R is built on knob.py's hyper-real round
 
 
 def view3d():
@@ -250,9 +258,9 @@ def render():
         in_view(bpy.ops.screen.animation_cancel, restore_frame=False)
     s = bpy.context.scene
     s.frame_set(44)
-    K.use_engine(s, "cycles", 48, 512)
+    K.use_engine(s, "cycles", 96 if REAL else 48, 512)
     s.render.film_transparent = True
-    s.view_settings.view_transform = "Standard"
+    color(s)
     bpy.context.preferences.view.render_display_type = "AREA"   # in the 3D view itself: "SCREEN" swaps the window, and the recording loses it
     _, area, region = view3d()
     with bpy.context.temp_override(window=window, area=area, region=region):
@@ -298,7 +306,15 @@ def stop():
     say("A filmstrip of 128 frames, ready for SynthMaker")
 
 
-# ---------------------------------------------------------------- Controls 2: the drive knob (--look D)
+def color(s):
+    """Look R renders in AgX (its highlights roll off instead of clipping); every other look keeps its colours."""
+    if REAL:
+        K.color_R(s)
+    else:
+        s.view_settings.view_transform = "Standard"
+
+
+# ---------------------------------------------------------------- Controls 2: the drive knob (--look D, R)
 
 def drive_profile(ridged):
     """The drive knob's profile, as knob.py's look D turns it; ridged adds the grip flutes."""
@@ -326,10 +342,22 @@ def replace_knob(o_new):
     bpy.context.view_layer.objects.active = o_new
 
 
+def cap_of(r, z):
+    """Look R: the faces of the spun-aluminium cap in the top's centre take the second material."""
+    return 1 if (r < 0.337 and z > 0.640) else 0
+
+
+def drive_lathe(ridged):
+    if REAL:
+        P, ridge, n = K.drive_profile_R(ridged)
+        return K.lathe("Knob", P, n * 16, ridge, mat_of=cap_of)
+    P, ridge, n = drive_profile(ridged)
+    return K.lathe("Knob", P, n * 12, ridge)
+
+
 def body():
     say("1 · A body on a wide skirt: one profile, turned round on a lathe")
-    P, _, flutes = drive_profile(False)
-    replace_knob(K.lathe("Knob", P, flutes * 12))
+    replace_knob(drive_lathe(False))
     in_view(bpy.ops.view3d.view_axis, type="FRONT")
     in_view(bpy.ops.view3d.view_selected)
     in_view(bpy.ops.view3d.view_orbit, angle=math.radians(30), type="ORBITUP")
@@ -337,22 +365,29 @@ def body():
 
 def flutes():
     say("2 · Shallow flutes round the body, for grip: 36 of them")
-    P, ridge, n = drive_profile(True)
-    replace_knob(K.lathe("Knob", P, n * 12, ridge))
+    replace_knob(drive_lathe(True))
 
 
 def pointer():
-    say("3 · Soft-touch black, and a white pointer line over the top and down the skirt")
     o = knob_object()
     o.data.materials.clear()
-    o.data.materials.append(K.drive_body("Drive"))
+    if REAL:
+        say("3 · Satin black plastic, a spun-aluminium cap, and a white pointer line over the top and down the skirt")
+        o.data.materials.append(K.satin_plastic("Satin", K.drive_pointer_R))
+        o.data.materials.append(K.brushed_alu_v2("Cap", line_r=(8, 9), zmin=5))   # no line on the cap
+    else:
+        say("3 · Soft-touch black, and a white pointer line over the top and down the skirt")
+        o.data.materials.append(K.drive_body("Drive"))
     _, area, _ = view3d()
     area.spaces.active.shading.type = "MATERIAL"
 
 
 def numbers():
     say("4 · A printed scale from 0 to 10 round it. It stays still: only the knob turns")
-    K.scale_marks(11, 1.42, 1.22, K.print_mat("Print"))
+    if REAL:
+        K.scale_marks_R(11, 1.42, 1.22, K.ink_mat("Ink"))
+    else:
+        K.scale_marks(11, 1.42, 1.22, K.print_mat("Print"))
     in_view(bpy.ops.view3d.view_axis, type="TOP")
     in_view(bpy.ops.view3d.view_all)
 
@@ -365,7 +400,7 @@ def drive_studio():
     K.camera_v2("top", 3.55)
     s = bpy.context.scene
     s.render.film_transparent = True
-    s.view_settings.view_transform = "Standard"
+    color(s)
     s.render.engine = "BLENDER_EEVEE"
     s.render.resolution_x = s.render.resolution_y = 256
     bpy.data.objects["ShadowCatcher"].hide_set(True)
@@ -389,7 +424,7 @@ def selector():
     for o in list(bpy.data.objects):
         if o.name.startswith(("Knob", "Tick", "Num")):
             bpy.data.objects.remove(o)
-    objs, _, head = K.selector_T()
+    objs, _, head = K.selector_R() if REAL else K.selector_T()
     s = bpy.context.scene
     s.frame_start, s.frame_end = 1, 3
     bpy.context.preferences.edit.keyframe_new_interpolation_type = "CONSTANT"
@@ -405,9 +440,9 @@ A_STEPS = [(clear, 1.0), (cylinder, 3.0), (rings, 2.5), (bevel, 2.5), (knurl, 3.
            (studio, 4.0), (sweep, 2.5), (play, 6.0), (stop, 2.0)]
 D_STEPS = [(clear, 1.0), (body, 3.0), (flutes, 3.0), (pointer, 3.5), (numbers, 3.5), (drive_studio, 4.0), (sweep, 2.5),
            (play, 6.0), (selector, 6.0), (stop, 2.0)]
-if A.look == "D":
+if A.look in ("D", "R"):
     studio = drive_studio   # the timeline's "studio" step is this look's studio
-STEPS = D_STEPS if A.look == "D" else A_STEPS
+STEPS = D_STEPS if A.look in ("D", "R") else A_STEPS
 state = {"i": 0}
 
 

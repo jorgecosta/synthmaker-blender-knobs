@@ -10,9 +10,12 @@ Render the aluminium knob as a 128-frame strip, 256 px per frame, seen from the 
 
 Looks: A brushed aluminium, B vintage bakelite, C dark with a glowing ring, D a drive pedal's knob (soft-touch
 black on a skirt, over a printed 0-10 scale that stays still), S toggle switch (2 frames), T a three-way selector
-(a chicken-head pointer over three dots, 3 frames), P a faceplate. Cameras: top or iso (30 degrees). --quality 2 adds scratches, wear and a product-photo studio.
+(a chicken-head pointer over three dots, 3 frames), P a faceplate, R the drive knob made hyper-real (satin moulded
+plastic, a spun-aluminium cap, a paint-filled pointer, a screen-printed scale, AgX colour), RT the selector to match.
+Cameras: top or iso (30 degrees). --quality 2 adds scratches, wear and a product-photo studio (look R always has it).
 
-live_build.py builds the knob step by step in Blender's interface (open Blender with it: --python live_build.py).
+live_build.py builds the knob step by step in Blender's interface (open Blender with it: --python live_build.py;
+-- --look D or R for the drive knob).
 make_set.py packs strips into a .smcontrols file that SynthMaker opens (AirDrop, Messages or Files).
 sheet.swift and strips.swift (macOS) make contact sheets and scaled strips.
 
