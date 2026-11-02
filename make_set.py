@@ -4,7 +4,7 @@
 
     make_set.py OUT.smcontrols "Set name" kind:camera:size:sweep:path[:slice[:id]] [...]
 
-kind is knob, switch or image; camera top or iso (or -); size in points; sweep in degrees (or -). The picture's
+kind is knob, switch, button (Controls 3: 2-4 frames: off, pressed, lit, lit and pressed) or image; camera top or iso (or -); size in points; sweep in degrees (or -). The picture's
 frame count comes from its shape for knobs and switches (height / width), 1 for an image. id names the control in
 the set ("selector"); by default it's knob, toggle or faceplate (knob-iso for the tilted camera). The file is the JSON
 SynthMaker reads (ControlSet in SynthMaker/Model/ControlSet.swift): each picture's bytes in base64, its pixel size,
@@ -29,9 +29,9 @@ def main():
         given_id = parts[6] if len(parts) > 6 and parts[6] else None
         data = open(path, "rb").read()
         w, h = size_of(path)
-        frames = 1 if kind == "image" else h // w
+        frames = 1 if kind == "image" else h // w   # a strip of square frames
         stem = os.path.splitext(os.path.basename(path))[0]
-        nice = {"knob": "knob", "switch": "toggle", "image": "faceplate"}[kind]
+        nice = {"knob": "knob", "switch": "toggle", "button": "pad", "image": "faceplate"}[kind]
         control = {
             "id": given_id or nice + ("-iso" if camera == "iso" else ""),   # "knob", "toggle", "faceplate"; "knob-iso" tilted
             "kind": kind,

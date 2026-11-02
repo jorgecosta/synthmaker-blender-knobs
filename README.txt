@@ -14,6 +14,12 @@ black on a skirt, over a printed 0-10 scale that stays still), S toggle switch (
 plastic, a spun-aluminium cap, a paint-filled pointer, a screen-printed scale, AgX colour), RT the selector to match.
 Cameras: top or iso (30 degrees). --quality 2 adds scratches, wear and a product-photo studio (look R always has it).
 
+pads.py renders groovebox pads (Controls 3) as 4-frame strips: off, pressed, lit, lit and pressed. Pads red, amber,
+green, blue and white (silicone in a moulded well), and the transport pads play, stop and playstop (a legend that
+lights green). It uses knob.py's studio, so keep the two side by side:
+
+    /Applications/Blender.app/Contents/MacOS/Blender -b --factory-startup --python pads.py -- --pad red --out pads
+
 live_build.py builds the knob step by step in Blender's interface (open Blender with it: --python live_build.py;
 -- --look D or R for the drive knob).
 make_set.py packs strips into a .smcontrols file that SynthMaker opens (AirDrop, Messages or Files).
